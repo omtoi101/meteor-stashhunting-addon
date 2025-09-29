@@ -78,6 +78,7 @@ import java.util.List;
 import java.util.Objects;
 import net.minecraft.block.Block;
 import net.minecraft.block.Blocks;
+import net.minecraft.item.ItemStack;
 
 public class TrailFollower extends Module implements IFlightModule {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -932,12 +933,7 @@ public class TrailFollower extends Module implements IFlightModule {
             if (!chunk.equals(prevChunk) || !chunk.countsEqual(prevChunk)) {
                 if (sendNotifications.get()) {
                     switch (notificationMode.get()) {
-                        case Chat -> info("Found stash at (highlight)%s(default), (highlight)%s(default).", chunk.x, chunk.z);
-                        case Toast -> mc.getToastManager().add(new MeteorToast(Items.CHEST, "Stash Finder", "Found Stash!"));
-                        case Both -> {
-                            info("Found stash at (highlight)%s(default), (highlight)%s(default).", chunk.x, chunk.z);
-                            mc.getToastManager().add(new MeteorToast(Items.CHEST, "Stash Finder", "Found Stash!"));
-                        }
+                        case Chat, Toast, Both -> info("Found stash at (highlight)%s(default), (highlight)%s(default).", chunk.x, chunk.z);
                     }
                 }
 

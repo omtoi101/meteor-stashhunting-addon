@@ -2,6 +2,7 @@ package com.stash.hunt.modules;
 
 import baritone.api.BaritoneAPI;
 import baritone.api.pathing.goals.GoalBlock;
+import com.stash.hunt.Addon;
 import com.stash.hunt.utils.FlightManager;
 import com.stash.hunt.utils.IFlightModule;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
@@ -29,8 +30,6 @@ import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.*;
 import net.minecraft.network.packet.s2c.play.CloseScreenS2CPacket;
 import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
-
-import com.stash.hunt.Addon;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.screen.sync.ItemStackHash;
 import net.minecraft.util.Identifier;
@@ -58,7 +57,6 @@ public class ElytraFlyPlusPlus extends Module implements IFlightModule {
     public void resumeFlight() {
         this.pausedByManager = false;
     }
-
 
     private final Setting<Boolean> bounce = sgGeneral.add(new BoolSetting.Builder()
         .name("Bounce")

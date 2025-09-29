@@ -8,16 +8,12 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.combat.AutoEXP;
-import meteordevelopment.meteorclient.systems.modules.movement.Scaffold;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
-
-import java.util.ArrayList;
-import java.util.List;
 
 public class AutoElytraRepair extends Module {
     private final SettingGroup sgGeneral = this.settings.getDefaultGroup();
@@ -60,9 +56,6 @@ public class AutoElytraRepair extends Module {
     private long repairStartTime = 0;
     private int timer = 0;
     private boolean justFinishedRepairing = false;
-
-    private boolean originalScaffoldAirPlace = false;
-    private boolean originalScaffoldAutoSwitch = false;
 
     private Vec3d lastPlayerPosition = null;
     private int stationaryTicks = 0;
@@ -154,30 +147,23 @@ public class AutoElytraRepair extends Module {
     }
 
     private void handleScaffolding() {
-        Scaffold scaffold = Modules.get().get(Scaffold.class);
-        if (scaffold == null) {
-            error("Scaffold module not found! Aborting.");
-            currentState = RepairState.EMERGENCY_DISCONNECT;
-            return;
+        BlockPos targetBlock = mc.player.getBlockPos().down();
+        if (mc.world.getBlockState(targetBlock).isAir()) {
+            info("No block below player, using Baritone to place one.");
+            String command = String.format("build stone %d %d %d", targetBlock.getX(), targetBlock.getY(), targetBlock.getZ());
+            baritone.api.BaritoneAPI.getProvider().getPrimaryBaritone().getCommandManager().execute(command);
         }
 
-        if (!scaffold.isActive()) {
-            originalScaffoldAirPlace = ((Setting<Boolean>) scaffold.settings.get("airPlace")).get();
-            originalScaffoldAutoSwitch = ((Setting<Boolean>) scaffold.settings.get("autoSwitch")).get();
-            ((Setting<Boolean>) scaffold.settings.get("airPlace")).set(true);
-            ((Setting<Boolean>) scaffold.settings.get("autoSwitch")).set(true);
-            scaffold.toggle();
-        }
-
-        AutoEXP autoExp = Modules.get().get(AutoEXP.class);
-        if (autoExp != null && !autoExp.isActive()) {
-            autoExp.toggle();
-        }
-
-        if (!mc.world.getBlockState(mc.player.getBlockPos().down()).isAir()) {
-            info("Block placed successfully. Starting repair.");
+        // Give Baritone a moment to place the block
+        if (timer++ > 40 && !mc.world.getBlockState(targetBlock).isAir()) {
+            info("Block is present. Starting repair.");
             currentState = RepairState.REPAIRING;
             repairStartTime = System.currentTimeMillis();
+            timer = 0;
+        } else if (timer > 100) { // Timeout after 5 seconds
+            error("Baritone failed to place block in time. Aborting repair.");
+            currentState = RepairState.EMERGENCY_DISCONNECT;
+            timer = 0;
         }
     }
 
@@ -237,15 +223,8 @@ public class AutoElytraRepair extends Module {
     }
 
     private void resumeNormalOperation() {
-        Scaffold scaffold = Modules.get().get(Scaffold.class);
-        if (scaffold != null && scaffold.isActive()) {
-            scaffold.toggle();
-            ((Setting<Boolean>) scaffold.settings.get("airPlace")).set(originalScaffoldAirPlace);
-            ((Setting<Boolean>) scaffold.settings.get("autoSwitch")).set(originalScaffoldAutoSwitch);
-        }
-
         AutoEXP autoExp = Modules.get().get(AutoEXP.class);
-        if (autoExp != null && autoExp.isActive()) {
+        if (autoExp != null && !autoExp.isActive()) {
             autoExp.toggle();
         }
         debugLog("AutoElytraRepair cleanup finished.");

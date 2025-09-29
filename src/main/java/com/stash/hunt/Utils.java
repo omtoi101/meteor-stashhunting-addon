@@ -11,19 +11,18 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.util.Hand;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import net.minecraft.util.WorldSavePath;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import org.jetbrains.annotations.Nullable;
-
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
 
 import javax.net.ssl.HttpsURLConnection;
 import java.io.OutputStream;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.UnknownServiceException;
-import net.minecraft.util.WorldSavePath;
 
 public class Utils
 {
@@ -205,12 +204,6 @@ public class Utils
         }
     }
 
-    public static boolean isPlayerAt(BlockPos pos, int tolerance) {
-        if (MinecraftClient.getInstance().player == null) return false;
-        return Math.abs(MinecraftClient.getInstance().player.getX() - pos.getX()) <= tolerance &&
-               Math.abs(MinecraftClient.getInstance().player.getZ() - pos.getZ()) <= tolerance;
-    }
-
     private static void sendRequest(String webhookURL, String json) {
         try {
             URL url = new URL(webhookURL);
@@ -236,6 +229,12 @@ public class Utils
         {
             e.printStackTrace();
         }
+    }
+
+    public static boolean isPlayerAt(BlockPos pos, int tolerance) {
+        if (MinecraftClient.getInstance().player == null) return false;
+        return Math.abs(MinecraftClient.getInstance().player.getX() - pos.getX()) <= tolerance &&
+               Math.abs(MinecraftClient.getInstance().player.getZ() - pos.getZ()) <= tolerance;
     }
 
     public static String getFileWorldName() {
