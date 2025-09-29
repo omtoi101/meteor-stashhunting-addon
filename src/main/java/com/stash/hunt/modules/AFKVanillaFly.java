@@ -2,9 +2,11 @@ package com.stash.hunt.modules;
 
 import com.stash.hunt.Addon;
 import com.stash.hunt.Utils;
-
+import com.stash.hunt.utils.FlightManager;
+import com.stash.hunt.utils.IFlightModule;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.DoubleSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
@@ -14,11 +16,22 @@ import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.item.Items;
 
-public class AFKVanillaFly extends Module {
+public class AFKVanillaFly extends Module implements IFlightModule {
     private long lastRocketUse = 0;
     private boolean launched = false;
     private double yTarget = -1;
     private float targetPitch = 0;
+    private boolean paused = false;
+
+    @Override
+    public void pauseFlight() {
+        this.paused = true;
+    }
+
+    @Override
+    public void resumeFlight() {
+        this.paused = false;
+    }
 
     public AFKVanillaFly() {
         super(Addon.CATEGORY, "AFKVanillaFly", "Maintains a level Y-flight with fireworks and smooth pitch control.");
@@ -31,6 +44,22 @@ public class AFKVanillaFly extends Module {
         .description("How long to wait between fireworks when using Timed Delay.")
         .defaultValue(4000)
         .sliderRange(0, 10000)
+        .build()
+    );
+
+    private final Setting<Double> pitchCorrectionDistance = sgGeneral.add(new DoubleSetting.Builder()
+        .name("Pitch Correction Distance")
+        .description("The distance used to calculate pitch correction. Higher values result in less aggressive correction.")
+        .defaultValue(100.0)
+        .sliderRange(10.0, 500.0)
+        .build()
+    );
+
+    private final Setting<Integer> relaunchDelay = sgGeneral.add(new IntSetting.Builder()
+        .name("Relaunch Delay (ms)")
+        .description("How long to wait before trying to use a firework after a failed launch.")
+        .defaultValue(1000)
+        .sliderRange(0, 5000)
         .build()
     );
 
@@ -53,12 +82,18 @@ public class AFKVanillaFly extends Module {
 
     @Override
     public void onActivate() {
+        FlightManager.register(this);
         launched = false;
         yTarget = -1;
 
         if (mc.player == null || !mc.player.isGliding()) {
             info("You must be flying before enabling AFKVanillaFly.");
         }
+    }
+
+    @Override
+    public void onDeactivate() {
+        FlightManager.unregister(this);
     }
 
     public void tickFlyLogic() {
@@ -89,7 +124,7 @@ public class AFKVanillaFly extends Module {
             double yDiff = currentY - yTarget;
 
             if (Math.abs(yDiff) > 10.0) {
-                targetPitch = (float) (Math.atan2(yDiff, 100) * (180 / Math.PI));
+                targetPitch = (float) (Math.atan2(yDiff, pitchCorrectionDistance.get()) * (180 / Math.PI));
             } else if (yDiff > 2.0) {
                 targetPitch = 10f;
             } else if (yDiff < -2.0) {
@@ -109,7 +144,7 @@ public class AFKVanillaFly extends Module {
             if (!launched) {
                 mc.player.jump();
                 launched = true;
-            } else if (System.currentTimeMillis() - lastRocketUse > 1000) {
+            } else if (System.currentTimeMillis() - lastRocketUse > relaunchDelay.get()) {
                 tryUseFirework();
             }
             yTarget = -1;
@@ -123,6 +158,7 @@ public class AFKVanillaFly extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
+        if (paused) return;
         tickFlyLogic();
     }
 

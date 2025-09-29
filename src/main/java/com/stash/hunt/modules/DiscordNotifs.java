@@ -272,7 +272,7 @@ public class DiscordNotifs extends Module
             if (queueMessages.get()) messageQueue.offer(message);
             return;
         }
-        delayTimer = delay.get() / 1000 * 20;
+        delayTimer = delay.get() / 50;
         if (timestamp.get())
         {
             LocalTime now = LocalTime.now();
@@ -280,12 +280,15 @@ public class DiscordNotifs extends Module
             String timestamp = now.format(formatter);
             message = "[" + timestamp + "] " + message;
         }
-        String json = "{\n" +
-            "\"embeds\": [{" +
-                "\"description\": \"" + message + "\"" +
-            "}]}";
-        // use threads so the game doesnt lag when sending a ton of webhooks
-        new Thread(() -> sendWebhook(webhookURL.get(), json, null)).start();
+
+        final String finalMessage = message;
+        new Thread(() -> {
+            String playerName = "Unknown";
+            if (mc.player != null) {
+                playerName = mc.player.getGameProfile().getName();
+            }
+            sendWebhook(webhookURL.get(), "Discord Notifs", finalMessage, null, playerName);
+        }).start();
     }
 
     public enum MessageType

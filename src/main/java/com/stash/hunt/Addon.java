@@ -35,6 +35,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new AFKVanillaFly());
         Modules.get().add(new AutoPortal());
         Modules.get().add(new Pitch40Util());
+        Modules.get().add(new AutoElytraRepair());
 //        Modules.get().add(new AutoTrade());
 //        Modules.get().add(new XPBot());
 //        Modules.get().add(new UnknownAccountNotifier());
@@ -64,7 +65,6 @@ public class Addon extends MeteorAddon {
 //            Modules.get().add(new MudCracker());
             if (xaeroMinimapLoaded)
             {
-                Modules.get().add(new BetterStashFinder());
                 Modules.get().add(new OldChunkNotifier());
 //                Modules.get().add(new LavaESP());
                 Modules.get().add(new TrailMaker());

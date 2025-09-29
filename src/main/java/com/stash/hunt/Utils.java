@@ -11,14 +11,19 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.util.Hand;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import org.jetbrains.annotations.Nullable;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 
 import javax.net.ssl.HttpsURLConnection;
 import java.io.OutputStream;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.UnknownServiceException;
+import net.minecraft.util.WorldSavePath;
 
 public class Utils
 {
@@ -169,34 +174,41 @@ public class Utils
         return diff < -180 ? diff + 360 : diff;
     }
 
-    public static void sendWebhook(String webhookURL, String title, String message, String pingID, String playerName)
-    {
-        String json = "";
-        json += "{\"embeds\": [{"
-            + "\"title\": \""+ title +"\","
-            + "\"description\": \""+ message +"\","
-            + "\"color\": 15258703,"
-            + "\"footer\": {"
-            + "\"text\": \"From: " + playerName + "\"}"
-            + "}]}";
-        sendRequest(webhookURL, json);
+    public static void sendWebhook(String webhookURL, String title, String message, String pingID, String playerName) {
+        sendWebhook(webhookURL, title, message, pingID, playerName, 15258703);
+    }
 
-        if (pingID != null)
-        {
-            json = "{\"content\": \"<@" + pingID + ">\"}";
-            sendRequest(webhookURL, json);
+    public static void sendWebhook(String webhookURL, String title, String message, String pingID, String playerName, int color) {
+        JsonObject embed = new JsonObject();
+        embed.addProperty("title", title);
+        embed.addProperty("description", message);
+        embed.addProperty("color", color);
+
+        if (playerName != null) {
+            JsonObject footer = new JsonObject();
+            footer.addProperty("text", "From: " + playerName);
+            embed.add("footer", footer);
+        }
+
+        JsonArray embeds = new JsonArray();
+        embeds.add(embed);
+
+        JsonObject payload = new JsonObject();
+        payload.add("embeds", embeds);
+
+        sendRequest(webhookURL, payload.toString());
+
+        if (pingID != null) {
+            JsonObject pingPayload = new JsonObject();
+            pingPayload.addProperty("content", "<@" + pingID + ">");
+            sendRequest(webhookURL, pingPayload.toString());
         }
     }
 
-    public static void sendWebhook(String webhookURL, String jsonObject, String pingID)
-    {
-        sendRequest(webhookURL, jsonObject);
-
-        if (pingID != null)
-        {
-            jsonObject = "{\"content\": \"<@" + pingID + ">\"}";
-            sendRequest(webhookURL, jsonObject);
-        }
+    public static boolean isPlayerAt(BlockPos pos, int tolerance) {
+        if (MinecraftClient.getInstance().player == null) return false;
+        return Math.abs(MinecraftClient.getInstance().player.getX() - pos.getX()) <= tolerance &&
+               Math.abs(MinecraftClient.getInstance().player.getZ() - pos.getZ()) <= tolerance;
     }
 
     private static void sendRequest(String webhookURL, String json) {
@@ -224,5 +236,14 @@ public class Utils
         {
             e.printStackTrace();
         }
+    }
+
+    public static String getFileWorldName() {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc.world == null) return "singleplayer";
+        if (mc.isInSingleplayer()) {
+            return mc.getServer().getSavePath(WorldSavePath.ROOT).normalize().toFile().getName();
+        }
+        return mc.getCurrentServerEntry().address.replace(':', '_');
     }
 }

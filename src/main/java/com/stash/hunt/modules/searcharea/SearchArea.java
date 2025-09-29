@@ -11,12 +11,27 @@ import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import com.stash.hunt.utils.FlightManager;
+import com.stash.hunt.utils.IFlightModule;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.util.math.BlockPos;
 
-public class SearchArea extends Module {
+import static com.stash.hunt.Utils.setPressed;
+
+public class SearchArea extends Module implements IFlightModule {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private boolean paused = false;
+
+    @Override
+    public void pauseFlight() {
+        this.paused = true;
+    }
+
+    @Override
+    public void resumeFlight() {
+        this.paused = false;
+    }
 
 
     public final Setting<SearchAreaModes> chunkLoadMode = sgGeneral.add(new EnumSetting.Builder<SearchAreaModes>()
@@ -92,18 +107,24 @@ public class SearchArea extends Module {
 
     @Override
     public void onActivate() {
+        FlightManager.register(this);
         currentMode.onActivate();
     }
 
     @Override
     public void onDeactivate()
     {
+        FlightManager.unregister(this);
         currentMode.onDeactivate();
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event)
     {
+        if (paused) {
+            setPressed(mc.options.forwardKey, false);
+            return;
+        }
         currentMode.onTick();
     }
 

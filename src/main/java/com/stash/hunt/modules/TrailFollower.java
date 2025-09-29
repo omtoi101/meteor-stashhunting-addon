@@ -6,6 +6,8 @@ import com.stash.hunt.Addon;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.stash.hunt.Utils;
+import com.stash.hunt.utils.FlightManager;
+import com.stash.hunt.utils.IFlightModule;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
@@ -36,9 +38,66 @@ import java.util.ArrayDeque;
 import static com.stash.hunt.Utils.positionInDirection;
 import static com.stash.hunt.Utils.sendWebhook;
 
-public class TrailFollower extends Module
-{
+import com.google.common.reflect.TypeToken;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import meteordevelopment.meteorclient.MeteorClient;
+import meteordevelopment.meteorclient.gui.GuiTheme;
+import meteordevelopment.meteorclient.gui.WindowScreen;
+import meteordevelopment.meteorclient.gui.widgets.WWidget;
+import meteordevelopment.meteorclient.gui.widgets.containers.WTable;
+import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
+import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
+import meteordevelopment.meteorclient.gui.widgets.pressable.WMinus;
+import meteordevelopment.meteorclient.pathing.PathManagers;
+import meteordevelopment.meteorclient.utils.render.MeteorToast;
+import net.minecraft.block.entity.AbstractFurnaceBlockEntity;
+import net.minecraft.block.entity.BarrelBlockEntity;
+import net.minecraft.block.entity.BlockEntity;
+import net.minecraft.block.entity.BlockEntityType;
+import net.minecraft.block.entity.ChestBlockEntity;
+import net.minecraft.block.entity.DispenserBlockEntity;
+import net.minecraft.block.entity.EnderChestBlockEntity;
+import net.minecraft.block.entity.HopperBlockEntity;
+import net.minecraft.block.entity.ShulkerBoxBlockEntity;
+import xaero.common.minimap.waypoints.Waypoint;
+import xaero.hud.minimap.BuiltInHudModules;
+import xaero.hud.minimap.module.MinimapSession;
+import xaero.hud.minimap.waypoint.set.WaypointSet;
+import xaero.hud.minimap.world.MinimapWorld;
+import xaero.map.mods.SupportMods;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.Writer;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Objects;
+import net.minecraft.block.Block;
+import net.minecraft.block.Blocks;
+
+public class TrailFollower extends Module implements IFlightModule {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgStashFinder = settings.createGroup("Stash Finder");
+    private boolean paused = false;
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    public List<Chunk> chunks = new ArrayList<>();
+
+    @Override
+    public void pauseFlight() {
+        this.paused = true;
+        if (BaritoneAPI.getProvider() != null && BaritoneAPI.getProvider().getPrimaryBaritone().getPathingBehavior().isPathing()) {
+            BaritoneAPI.getProvider().getPrimaryBaritone().getCommandManager().execute("cancel");
+        }
+    }
+
+    @Override
+    public void resumeFlight() {
+        this.paused = false;
+    }
 
     // TODO: Set this automatically either by looking at the rate of chunk loads or by using yaw instead of block pos so size doesnt negatively effect result
     public final Setting<Integer> maxTrailLength = sgGeneral.add(new IntSetting.Builder()
@@ -130,6 +189,107 @@ public class TrailFollower extends Module
         .build()
     );
 
+    // Stash Finder Settings
+    private final Setting<List<BlockEntityType<?>>> storageBlocks = sgStashFinder.add(new StorageBlockListSetting.Builder()
+        .name("storage-blocks")
+        .description("Select the storage blocks to search for.")
+        .defaultValue(StorageBlockListSetting.STORAGE_BLOCKS)
+        .build()
+    );
+
+    private final Setting<Integer> minimumStorageCount = sgStashFinder.add(new IntSetting.Builder()
+        .name("minimum-storage-count")
+        .description("The minimum amount of storage blocks in a chunk to record the chunk.")
+        .defaultValue(4)
+        .min(1)
+        .sliderMin(1)
+        .build()
+    );
+
+    private final Setting<Boolean> shulkerInstantHit = sgStashFinder.add(new BoolSetting.Builder()
+        .name("shulker-instant-hit")
+        .description("If a single shulker counts as a stash.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Boolean> ignoreTrialChambers = sgStashFinder.add(new BoolSetting.Builder()
+        .name("ignore-trial-chambers")
+        .description("Attempts to ignore trial chambers, but may cause false negatives if someone made their base to look like a trial chamber.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> minimumDistance = sgStashFinder.add(new IntSetting.Builder()
+        .name("minimum-distance")
+        .description("The minimum distance you must be from spawn to record a certain chunk.")
+        .defaultValue(0)
+        .min(0)
+        .sliderMax(10000)
+        .build()
+    );
+
+    private final Setting<Boolean> saveToWaypoints = sgStashFinder.add(new BoolSetting.Builder()
+        .name("save-to-waypoints")
+        .description("Creates xaeros minimap waypoints for stash finds.")
+        .defaultValue(false)
+        .onChanged(this::waypointSettingChanged)
+        .build()
+    );
+
+    private final Setting<Boolean> sendNotifications = sgStashFinder.add(new BoolSetting.Builder()
+        .name("notifications")
+        .description("Sends Minecraft notifications when new stashes are found.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Mode> notificationMode = sgStashFinder.add(new EnumSetting.Builder<Mode>()
+        .name("notification-mode")
+        .description("The mode to use for notifications.")
+        .defaultValue(Mode.Both)
+        .visible(sendNotifications::get)
+        .build()
+    );
+
+    private final Setting<Boolean> sendStashWebhook = sgStashFinder.add(new BoolSetting.Builder()
+        .name("Send Stash Webhook")
+        .description("Sends a webhook when a stash is found.")
+        .defaultValue(false)
+        .build()
+    );
+
+    public final Setting<String> stashWebhookLink = sgStashFinder.add(new StringSetting.Builder()
+        .name("Stash Webhook Link")
+        .description("A discord webhook link for stash notifications.")
+        .defaultValue("")
+        .visible(sendStashWebhook::get)
+        .build()
+    );
+
+    public final Setting<Boolean> advancedStashLogging = sgStashFinder.add(new BoolSetting.Builder()
+        .name("advanced-stash-logging")
+        .description("Will log more information, including the amount of each container found.")
+        .defaultValue(false)
+        .build()
+    );
+
+    public final Setting<Boolean> pingForStash = sgStashFinder.add(new BoolSetting.Builder()
+        .name("Ping For Stash")
+        .description("Pings you for stash finder messages")
+        .defaultValue(false)
+        .visible(sendStashWebhook::get)
+        .build()
+    );
+
+    public final Setting<String> stashDiscordId = sgStashFinder.add(new StringSetting.Builder()
+        .name("Stash Discord ID")
+        .description("Your discord ID for stash pings")
+        .defaultValue("")
+        .visible(() -> sendStashWebhook.get() && pingForStash.get())
+        .build()
+    );
+
     public final Setting<Boolean> autoElytra = sgGeneral.add(new BoolSetting.Builder()
         .name("[Baritone] Auto Start Baritone Elytra")
         .description("Starts baritone elytra for you.")
@@ -188,12 +348,12 @@ public class TrailFollower extends Module
         .build()
     );
 
-    public final Setting<Double> chunkFoundTimeout = sgAdvanced.add(new DoubleSetting.Builder()
-        .name("Chunk Found Timeout")
-        .description("The amount of MS without a chunk found to trigger circling.")
-        .defaultValue(1000 * 5)
-        .min(1000)
-        .sliderMax(1000 * 10)
+    private final Setting<Integer> chunkFoundTimeout = sgAdvanced.add(new IntSetting.Builder()
+        .name("Chunk Found Timeout (S)")
+        .description("The amount of seconds without a chunk found to trigger circling.")
+        .defaultValue(5)
+        .min(1)
+        .sliderMax(10)
         .build()
     );
 
@@ -206,12 +366,12 @@ public class TrailFollower extends Module
         .build()
     );
 
-    public final Setting<Double> trailTimeout = sgAdvanced.add(new DoubleSetting.Builder()
-        .name("Trail Timeout")
-        .description("The amount of MS without a chunk found to stop following the trail.")
-        .defaultValue(1000 * 30)
-        .min(1000 * 10)
-        .sliderMax(1000 * 60)
+    private final Setting<Integer> trailTimeout = sgAdvanced.add(new IntSetting.Builder()
+        .name("Trail Timeout (S)")
+        .description("The amount of seconds without a chunk found to stop following the trail.")
+        .defaultValue(30)
+        .min(10)
+        .sliderMax(60)
         .build()
     );
     // added trail deviation slider now that baritone is locked to trail pathing
@@ -293,8 +453,10 @@ public class TrailFollower extends Module
     @Override
     public void onActivate()
     {
+        FlightManager.register(this);
         resetTrail();
         XaeroPlus.EVENT_BUS.register(this);
+        load();
         if (mc.player != null && mc.world != null)
         {
             RegistryKey<World> currentDimension = mc.world.getRegistryKey();
@@ -376,6 +538,7 @@ public class TrailFollower extends Module
     @Override
     public void onDeactivate()
     {
+        FlightManager.unregister(this);
         // do this at the end to free memory
         seenChunksCache = Caffeine.newBuilder()
             .maximumSize(chunkCacheLength.get())
@@ -423,15 +586,15 @@ public class TrailFollower extends Module
         mc.player.setYaw(getActualYaw((float) (mc.player.getYaw() + circlingDegPerTick.get())));
         if (mc.player.age % 100 == 0)
         {
-            log("Circling to look for new chunks, abandoning trail in " + (trailTimeout.get() - (System.currentTimeMillis() - lastFoundTrailTime)) / 1000 + " seconds.");
+            log("Circling to look for new chunks, abandoning trail in " + (trailTimeout.get() * 1000 - (System.currentTimeMillis() - lastFoundTrailTime)) / 1000 + " seconds.");
         }
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event)
     {
-        if (mc.player == null || mc.world == null) return;
-        if (followingTrail && System.currentTimeMillis() - lastFoundTrailTime > trailTimeout.get())
+        if (mc.player == null || mc.world == null || paused) return;
+        if (followingTrail && System.currentTimeMillis() - lastFoundTrailTime > trailTimeout.get() * 1000)
         {
             resetTrail();
             log("Trail timed out, stopping.");
@@ -454,7 +617,7 @@ public class TrailFollower extends Module
                 }
             }
         }
-        if (followingTrail && System.currentTimeMillis() - lastFoundTrailTime > chunkFoundTimeout.get())
+        if (followingTrail && System.currentTimeMillis() - lastFoundTrailTime > chunkFoundTimeout.get() * 1000)
         {
             circle();
             return;
@@ -557,6 +720,15 @@ public class TrailFollower extends Module
     public void onChunkData(ChunkDataEvent event)
     {
         if (event.seenChunk()) return;
+
+        // Stash Finder Logic
+        double chunkXAbs = Math.abs(event.chunk().getPos().x * 16);
+        double chunkZAbs = Math.abs(event.chunk().getPos().z * 16);
+        if (Math.sqrt(chunkXAbs * chunkXAbs + chunkZAbs * chunkZAbs) >= minimumDistance.get()) {
+            scanChunkForStash(event);
+        }
+
+        // Trail Follower Logic
         RegistryKey<World> currentDimension = mc.world.getRegistryKey();
         WorldChunk chunk = event.chunk();
         ChunkPos chunkPos = chunk.getPos();
@@ -723,6 +895,196 @@ public class TrailFollower extends Module
         }
     }
 
+    // Stash Finder Helper Methods
+    private void scanChunkForStash(ChunkDataEvent event) {
+        Chunk chunk = new Chunk(event.chunk().getPos());
+        RegistryKey<World> currentDimension = mc.world.getRegistryKey();
+
+        for (BlockEntity blockEntity : event.chunk().getBlockEntities().values()) {
+            if (!storageBlocks.get().contains(blockEntity.getType())) continue;
+
+            Block blockUnder = mc.world.getBlockState(blockEntity.getPos().down()).getBlock();
+            if (ignoreTrialChambers.get() && (blockUnder.equals(Blocks.WAXED_OXIDIZED_CUT_COPPER) ||
+                blockUnder.equals(Blocks.TUFF_BRICKS) || blockUnder.equals(Blocks.WAXED_COPPER_BLOCK) ||
+                blockUnder.equals(Blocks.WAXED_OXIDIZED_COPPER)))
+            {
+                continue;
+            }
+
+            if (blockEntity instanceof ChestBlockEntity) chunk.chests++;
+            else if (blockEntity instanceof BarrelBlockEntity) chunk.barrels++;
+            else if (blockEntity instanceof ShulkerBoxBlockEntity) chunk.shulkers++;
+            else if (blockEntity instanceof EnderChestBlockEntity) chunk.enderChests++;
+            else if (blockEntity instanceof AbstractFurnaceBlockEntity) chunk.furnaces++;
+            else if (blockEntity instanceof DispenserBlockEntity) chunk.dispensersDroppers++;
+            else if (blockEntity instanceof HopperBlockEntity) chunk.hoppers++;
+        }
+
+        if ((chunk.getTotal() >= minimumStorageCount.get()) || (shulkerInstantHit.get() && chunk.shulkers > 0)) {
+            Chunk prevChunk = null;
+            int i = chunks.indexOf(chunk);
+
+            if (i < 0) chunks.add(chunk);
+            else prevChunk = chunks.set(i, chunk);
+
+            saveJson();
+
+            if (!chunk.equals(prevChunk) || !chunk.countsEqual(prevChunk)) {
+                if (sendNotifications.get()) {
+                    switch (notificationMode.get()) {
+                        case Chat -> info("Found stash at (highlight)%s(default), (highlight)%s(default).", chunk.x, chunk.z);
+                        case Toast -> mc.getToastManager().add(new MeteorToast(Items.CHEST, "Stash Finder", "Found Stash!"));
+                        case Both -> {
+                            info("Found stash at (highlight)%s(default), (highlight)%s(default).", chunk.x, chunk.z);
+                            mc.getToastManager().add(new MeteorToast(Items.CHEST, "Stash Finder", "Found Stash!"));
+                        }
+                    }
+                }
+
+                if (sendStashWebhook.get() && !stashWebhookLink.get().isEmpty()) {
+                    // Simplified webhook logic for now
+                    String message = "Found stash at " + chunk.x + ", " + chunk.z + ".";
+                    new Thread(() -> sendWebhook(stashWebhookLink.get(), "Stash Found", message, pingForStash.get() ? stashDiscordId.get() : null, mc.player.getGameProfile().getName())).start();
+                }
+
+                if (saveToWaypoints.get()) {
+                    WaypointSet waypointSet = getWaypointSet();
+                    if (waypointSet == null) return;
+                    addToWaypoints(waypointSet, chunk);
+                    SupportMods.xaeroMinimap.requestWaypointsRefresh();
+                }
+            }
+        }
+    }
+
+    private void load() {
+        File file = getJsonFile();
+        if (file.exists()) {
+            try {
+                FileReader reader = new FileReader(file);
+                chunks = GSON.fromJson(reader, new TypeToken<List<Chunk>>() {}.getType());
+                if (chunks == null) chunks = new ArrayList<>();
+                reader.close();
+                for (Chunk chunk : chunks) chunk.calculatePos();
+            } catch (Exception ignored) {
+                if (chunks == null) chunks = new ArrayList<>();
+            }
+        }
+    }
+
+    private void saveJson() {
+        try {
+            File file = getJsonFile();
+            file.getParentFile().mkdirs();
+            Writer writer = new FileWriter(file);
+            GSON.toJson(chunks, writer);
+            writer.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private File getJsonFile() {
+        return new File(new File(MeteorClient.FOLDER, "trail-follower-stashes"), Utils.getFileWorldName() + ".json");
+    }
+
+    private WaypointSet getWaypointSet()
+    {
+        MinimapSession minimapSession = BuiltInHudModules.MINIMAP.getCurrentSession();
+        if (minimapSession == null) return null;
+        MinimapWorld currentWorld = minimapSession.getWorldManager().getCurrentWorld();
+        if (currentWorld == null) return null;
+        return currentWorld.getCurrentWaypointSet();
+    }
+
+    private final Setting<Integer> stashColorThreshold1 = sgStashFinder.add(new IntSetting.Builder()
+        .name("Stash Color Threshold 1")
+        .description("The total number of storage blocks for the first color tier.")
+        .defaultValue(15)
+        .build());
+
+    private final Setting<Integer> stashColorThreshold2 = sgStashFinder.add(new IntSetting.Builder()
+        .name("Stash Color Threshold 2")
+        .description("The total number of storage blocks for the second color tier.")
+        .defaultValue(50)
+        .build());
+
+    private final Setting<Integer> stashColorThreshold3 = sgStashFinder.add(new IntSetting.Builder()
+        .name("Stash Color Threshold 3")
+        .description("The total number of storage blocks for the third color tier.")
+        .defaultValue(100)
+        .build());
+
+    private void addToWaypoints(WaypointSet waypointSet, Chunk chunk)
+    {
+        int x = chunk.x;
+        int z = chunk.z;
+        if (getWaypointByCoordinate(x, z) != null) return;
+        String waypointName = getWaypointName(chunk);
+        int color = 0;
+        if (chunk.getTotal() < stashColorThreshold1.get()) color = 10; // green
+        else if (chunk.getTotal() < stashColorThreshold2.get()) color = 14; // yellow
+        else if (chunk.getTotal() < stashColorThreshold3.get()) color = 12; // orange
+        else color = 4; // red
+        Waypoint waypoint = new Waypoint(x, 70, z, waypointName, "S", color, 0, false);
+        waypointSet.add(waypoint);
+    }
+
+    private String getWaypointName(Chunk chunk) {
+        String waypointName = "";
+        if (chunk.chests > 0) waypointName += "C:" + chunk.chests;
+        if (chunk.barrels > 0) waypointName += "B:" + chunk.barrels;
+        if (chunk.shulkers > 0) waypointName += "S:" + chunk.shulkers;
+        if (chunk.enderChests > 0) waypointName += "E:" + chunk.enderChests;
+        if (chunk.hoppers > 0) waypointName += "H:" + chunk.hoppers;
+        if (chunk.dispensersDroppers > 0) waypointName += "D:" + chunk.dispensersDroppers;
+        if (chunk.furnaces > 0) waypointName += "F:" + chunk.furnaces;
+        return waypointName;
+    }
+
+    private Waypoint getWaypointByCoordinate(int x, int z)
+    {
+        WaypointSet waypointSet = getWaypointSet();
+        if (waypointSet == null) return null;
+        for (Waypoint waypoint : waypointSet.getWaypoints())
+        {
+            if (waypoint.getX() == x && waypoint.getZ() == z)
+            {
+                return waypoint;
+            }
+        }
+        return null;
+    }
+
+    private void removeAllStashWaypoints(List<Chunk> chunks)
+    {
+        WaypointSet waypointSet = getWaypointSet();
+        if (waypointSet == null) return;
+        for (Chunk chunk : chunks)
+        {
+            Waypoint waypoint = getWaypointByCoordinate(chunk.x, chunk.z);
+            if (waypoint != null)
+            {
+                waypointSet.remove(waypoint);
+            }
+        }
+        SupportMods.xaeroMinimap.requestWaypointsRefresh();
+    }
+
+    private void waypointSettingChanged(boolean enabled)
+    {
+        if (!enabled) {
+            removeAllStashWaypoints(chunks);
+        } else {
+            WaypointSet waypointSet = getWaypointSet();
+            if (waypointSet == null) return;
+            for (Chunk chunk : chunks) {
+                addToWaypoints(waypointSet, chunk);
+            }
+            SupportMods.xaeroMinimap.requestWaypointsRefresh();
+        }
+    }
+
     public enum FollowMode
     {
         AUTO,
@@ -750,5 +1112,52 @@ public class TrailFollower extends Module
         DISABLE,
         FLY_TOWARDS_YAW,
         DISCONNECT
+    }
+
+    public enum Mode {
+        Chat,
+        Toast,
+        Both
+    }
+
+    public static class Chunk {
+        private static final StringBuilder sb = new StringBuilder();
+
+        public ChunkPos chunkPos;
+        public transient int x, z;
+        public int chests, barrels, shulkers, enderChests, furnaces, dispensersDroppers, hoppers;
+
+        public Chunk(ChunkPos chunkPos) {
+            this.chunkPos = chunkPos;
+
+            calculatePos();
+        }
+
+        public void calculatePos() {
+            x = chunkPos.x * 16 + 8;
+            z = chunkPos.z * 16 + 8;
+        }
+
+        public int getTotal() {
+            return chests + barrels + shulkers + enderChests + furnaces + dispensersDroppers + hoppers;
+        }
+
+        public boolean countsEqual(Chunk c) {
+            if (c == null) return false;
+            return chests != c.chests || barrels != c.barrels || shulkers != c.shulkers || enderChests != c.enderChests || furnaces != c.furnaces || dispensersDroppers != c.dispensersDroppers || hoppers != c.hoppers;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            Chunk chunk = (Chunk) o;
+            return Objects.equals(chunkPos, chunk.chunkPos);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(chunkPos);
+        }
     }
 }

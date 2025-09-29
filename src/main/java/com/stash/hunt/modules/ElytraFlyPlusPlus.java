@@ -2,6 +2,8 @@ package com.stash.hunt.modules;
 
 import baritone.api.BaritoneAPI;
 import baritone.api.pathing.goals.GoalBlock;
+import com.stash.hunt.utils.FlightManager;
+import com.stash.hunt.utils.IFlightModule;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
@@ -40,10 +42,23 @@ import java.util.List;
 
 import static com.stash.hunt.Utils.*;
 
-public class ElytraFlyPlusPlus extends Module {
+public class ElytraFlyPlusPlus extends Module implements IFlightModule {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgObstaclePasser = settings.createGroup("Obstacle Passer");
+
+    private boolean pausedByManager = false;
+
+    @Override
+    public void pauseFlight() {
+        this.pausedByManager = true;
+    }
+
+    @Override
+    public void resumeFlight() {
+        this.pausedByManager = false;
+    }
+
 
     private final Setting<Boolean> bounce = sgGeneral.add(new BoolSetting.Builder()
         .name("Bounce")
@@ -253,6 +268,7 @@ public class ElytraFlyPlusPlus extends Module {
     @Override
     public void onActivate()
     {
+        FlightManager.register(this);
         if (mc.player == null || mc.player.getAbilities().allowFlying) return;
 
         startSprinting = mc.player.isSprinting();
@@ -336,6 +352,7 @@ public class ElytraFlyPlusPlus extends Module {
     @Override
     public void onDeactivate()
     {
+        FlightManager.unregister(this);
         if (mc.player == null) return;
 
         if (bounce.get())
@@ -368,7 +385,7 @@ public class ElytraFlyPlusPlus extends Module {
     @EventHandler
     private void onTick(TickEvent.Pre event)
     {
-        if (mc.player == null || mc.player.getAbilities().allowFlying) return;
+        if (mc.player == null || mc.player.getAbilities().allowFlying || pausedByManager) return;
 
         if (toggleElytra.get() && !fakeFly.get() && !elytraToggled)
         {
